@@ -4,6 +4,8 @@ import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 
+from sim.float_box import FloatBox
+from sim.int_box import IntBox
 
 BEAM_PART = \
 """
@@ -103,9 +105,11 @@ def create_fluka_inp(f_name, design_mask):
 
 
 class NeutronSourceEnv(object):
-    def __init__(self, action_dim=64, max_steps=64, rew_scale=10000):
+    def __init__(self, action_dim=64, max_steps=64, rew_scale=100.):
         self.action_dim = action_dim
         self.max_steps = max_steps
+        self.action_space = IntBox(0, 1, shape=(action_dim,))
+        self.observation_space = IntBox(0, 1, shape=(max_steps + action_dim,))
         self.geometry = np.ones((max_steps, action_dim))
         self.steps = 0
         self.rew_scale = rew_scale
@@ -116,8 +120,12 @@ class NeutronSourceEnv(object):
 
         rew = self.get_reward()
         done = self.steps == self.max_steps
+        obs = np.zeros(self.max_steps)
+        if self.steps < self.max_steps:
+            obs[self.steps] = 1
+        obs = np.concatenate([action, obs])
 
-        return self.geometry, rew, done
+        return obs, rew, done, {}
 
     def get_reward(self):
         if self.steps == self.max_steps:
@@ -129,9 +137,12 @@ class NeutronSourceEnv(object):
             return 0.
 
     def reset(self):
-        self.geometry = np.ones((self.max_steps, self.action_dim))
+        action = np.zeros(self.action_dim)
+        obs = np.zeros(self.max_steps)
+        obs[0] = 1
+        obs = np.concatenate([action, obs])
         self.steps = 0
-        return self.geometry
+        return obs
 
     def run_sim(self):
         os.chdir(WORK_DIR)
@@ -139,7 +150,7 @@ class NeutronSourceEnv(object):
         f_name = WORK_DIR + '/neutron-source.inp'
         create_fluka_inp(f_name, self.geometry)
 
-        subprocess.run(['/usr/local/fluka/bin/rfluka', '-M 1', f_name])
+        return subprocess.run(['/usr/local/fluka/bin/rfluka', '-M 1', f_name], capture_output=True)
 
     def read_data(self):
         f_name = WORK_DIR + '/neutron-source001_fort.25'
@@ -162,13 +173,14 @@ class NeutronSourceEnv(object):
 
 
 if __name__ == '__main__':
-    env = NeutronSourceEnv()
+    action_dim = 64
+    env = NeutronSourceEnv(action_dim=action_dim)
     np.random.seed(47)
 
     done = False
     while not done:
-        action = np.random.uniform(size=64) > 0.5
-        state, rew, done = env.step(action)
+        action = np.random.uniform(size=action_dim) > 0.5
+        obs, rew, done, _ = env.step(action)
 
-    print(state)
+    print(obs)
     print(rew)
