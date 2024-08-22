@@ -18,14 +18,14 @@ flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_string('task', 'run', 'Training task name.')
 flags.DEFINE_integer('num_samples', int(1e6), 'Number of sampling steps.')
 flags.DEFINE_integer('replay_buffer_size', int(1e5), 'Replay buffer capacity.')
-flags.DEFINE_integer('start_training', 320,
+flags.DEFINE_integer('start_training', 400,
                      'Number of training steps to start training.')
 flags.DEFINE_integer('episode_length', 1000, 'Max episode length.')
 flags.DEFINE_integer('eval_episodes', 1,
                      'Number of episodes used for evaluation.')
 flags.DEFINE_integer('log_interval', 1000, 'Logging interval.')
 flags.DEFINE_integer('eval_interval', 1000, 'Eval interval.')
-flags.DEFINE_integer('train_interval', 320, 'Mini-batch size for SGD.')
+flags.DEFINE_integer('train_interval', 400, 'Mini-batch size for SGD.')
 flags.DEFINE_integer('train_batch_size', 256, 'Mini-batch size for SGD.')
 flags.DEFINE_boolean('save_video', True, 'Save videos during evaluation.')
 config_flags.DEFINE_config_file(

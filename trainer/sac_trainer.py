@@ -1,3 +1,4 @@
+from multiprocessing import Pool
 from typing import Dict
 
 import numpy as np
@@ -11,7 +12,7 @@ from trainer.trainer import Trainer
 
 
 def evaluate(agent, env, num_episodes, **kwargs) -> Dict[str, float]:
-    stats = {'reward': []}
+    stats = {'total_reward': []}
     for _ in range(num_episodes):
         obs, done = env.reset(), False
         rew = 0
@@ -20,7 +21,7 @@ def evaluate(agent, env, num_episodes, **kwargs) -> Dict[str, float]:
             obs, rew, done, info = env.step(action)
             rew += rew
 
-        stats['reward'].append(rew)
+        stats['total_reward'].append(rew)
 
     for k, v in stats.items():
         stats[k] = np.mean(v)
@@ -33,6 +34,7 @@ class SACTrainer(Trainer):
     def __init__(self,
                  config,
                  create_env,
+                 num_cpus: int = 4,
                  num_samples: int = int(1e7),
                  replay_buffer_size: int = int(1e6),
                  start_training: int = int(1e4),
@@ -46,6 +48,7 @@ class SACTrainer(Trainer):
                  seed: int = 42):
         super(SACTrainer, self).__init__(seed, config, save_video=save_video)
 
+        self.num_cpus = num_cpus
         self.num_samples = num_samples
         self.start_training = start_training
         self.episode_length = episode_length
@@ -62,7 +65,7 @@ class SACTrainer(Trainer):
         # initialize environment
         self.env = create_env()
         self.eval_env = create_env()
-        self.observation, self.episode_done = self.env.reset(), False
+        self.obs = self.env.reset()
 
         # initialize agent
         self.agent = SACAgent(seed,
@@ -73,30 +76,18 @@ class SACTrainer(Trainer):
         self.pbar = None
 
     def rollout_step(self, i):
-        # if i < self.start_training:
-        #     action = self.env.action_space.sample()
-        # else:
-        #     action = self.agent.take_action(self.observation)
-        action = self.agent.take_action(self.observation)
+        action = self.agent.take_action(self.obs)
+        next_obs, reward, done, info = self.env.step(action)
+        mask = 1.0
 
-        next_observation, reward, done, info = self.env.step(action)
+        self.replay_buffer.insert(self.obs, action, reward, mask, next_obs)
 
-        if not done or 'TimeLimit.truncated' in info:
-            mask = 1.0
+        if done:
+            self.obs = self.env.reset()
         else:
-            mask = 0.0
+            self.obs = next_obs
 
-        self.replay_buffer.insert(self.observation, action, reward, mask, next_observation)
-
-        self.observation, self.episode_done = next_observation, done
         self.rollout_timesteps += 1
-        self.pbar.update(1)
-
-        if self.episode_done:
-            self.observation, self.episode_done = self.env.reset(), False
-            # for k, v in info['episode'].items():
-            #     self.summary_writer.add_scalar(f'training/{k}', v,
-            #                                    info['total']['timesteps'])
         return i
 
     def train_step(self, i):
@@ -111,17 +102,19 @@ class SACTrainer(Trainer):
         return i
 
     def eval_step(self, i):
-        if i % self.eval_interval == 0:
+        if i >= self.start_training and i % self.eval_interval == 0:
             eval_stats = evaluate(self.agent, self.eval_env, self.eval_episodes, temperature=0.0)
 
             for k, v in eval_stats.items():
-                self.summary_writer.add_scalar(f'evaluation/average_{k}s', v, self.rollout_timesteps)
+                self.summary_writer.add_scalar(f'evaluation/{k}', v, self.rollout_timesteps)
             self.summary_writer.flush()
+
+        self.pbar.update(1)
         return i
 
     def reset(self):
         self.stop()
-        self.observation, self.episode_done = self.env.reset(), False
+        self.obs = self.env.reset()
         self.rollout_timesteps = 0
 
     def start(self):

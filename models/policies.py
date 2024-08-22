@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Sequence, Tuple
 
 import distrax
@@ -80,6 +81,7 @@ class NormalTanhMixturePolicy(nn.Module):
         return distrax.Independent(dist, 1)
 
 
+@partial(jax.jit, static_argnums=1)
 def sample_actions(rng: PRNGKey,
                    actor_def: nn.Module,
                    actor_params: Params,
@@ -88,5 +90,3 @@ def sample_actions(rng: PRNGKey,
     dist = actor_def.apply({'params': actor_params}, observations, temperature)
     rng, key = jax.random.split(rng)
     return rng, dist.sample(seed=key)
-
-sample_actions = jax.jit(sample_actions, static_argnums=1)

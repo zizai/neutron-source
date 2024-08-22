@@ -1,5 +1,5 @@
 """Implementations of algorithms for continuous control."""
-
+from functools import partial
 from typing import Optional, Sequence, Tuple
 
 import jax
@@ -13,6 +13,7 @@ from models.common import ActorCriticTemp, InfoDict, Model
 from sac import temperature, critic, actor
 
 
+@partial(jax.jit, static_argnums=(2, 3, 4, 5))
 def _update_jit(sac: ActorCriticTemp, batch: Batch, discount: float,
                 tau: float, target_entropy: float,
                 update_target: bool) -> Tuple[ActorCriticTemp, InfoDict]:
@@ -26,9 +27,6 @@ def _update_jit(sac: ActorCriticTemp, batch: Batch, discount: float,
                                          target_entropy)
 
     return sac, {**critic_info, **actor_info, **alpha_info}
-
-
-_update_jit = jax.jit(_update_jit, static_argnums=(2, 3, 4, 5))
 
 
 class SACAgent(object):

@@ -105,11 +105,12 @@ def create_fluka_inp(f_name, design_mask):
 
 
 class NeutronSourceEnv(object):
-    def __init__(self, action_dim=64, max_steps=64, rew_scale=100.):
+    def __init__(self, action_dim=64, max_steps=64, rew_scale=1000.):
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.action_space = IntBox(0, 1, shape=(action_dim,))
-        self.observation_space = IntBox(0, 1, shape=(max_steps + action_dim,))
+        self.observation_space = IntBox(0, 1, shape=(max_steps,))
+        # self.observation_space = IntBox(0, 1, shape=(max_steps + action_dim,))
         self.geometry = np.ones((max_steps, action_dim))
         self.steps = 0
         self.rew_scale = rew_scale
@@ -118,29 +119,25 @@ class NeutronSourceEnv(object):
         self.geometry[self.steps] = action
         self.steps += 1
 
-        rew = self.get_reward()
+        rew = - np.sum(action) * 0.05
+        if self.steps == self.max_steps:
+            self.run_sim()
+            data = self.read_data()
+            rew += np.sum(data[30:-30, 30:-30]) * self.rew_scale
+
         done = self.steps == self.max_steps
         obs = np.zeros(self.max_steps)
         if self.steps < self.max_steps:
             obs[self.steps] = 1
-        obs = np.concatenate([action, obs])
+        # obs = np.concatenate([action, obs])
 
         return obs, rew, done, {}
 
-    def get_reward(self):
-        if self.steps == self.max_steps:
-            self.run_sim()
-            data = self.read_data()
-            rew = np.sum(data[30:-30, 30:-30]) * self.rew_scale
-            return rew
-        else:
-            return 0.
-
     def reset(self):
-        action = np.zeros(self.action_dim)
         obs = np.zeros(self.max_steps)
         obs[0] = 1
-        obs = np.concatenate([action, obs])
+        # action = np.zeros(self.action_dim)
+        # obs = np.concatenate([action, obs])
         self.steps = 0
         return obs
 
