@@ -1,8 +1,7 @@
 import os
 import sys
-
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-sys.path.append("./")
+from datetime import datetime
+from functools import partial
 
 from absl import app, flags
 from ml_collections import config_flags
@@ -18,16 +17,17 @@ flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_string('task', 'run', 'Training task name.')
 flags.DEFINE_integer('num_samples', int(1e6), 'Number of sampling steps.')
 flags.DEFINE_integer('replay_buffer_size', int(1e5), 'Replay buffer capacity.')
-flags.DEFINE_integer('start_training', 400,
+flags.DEFINE_integer('start_training', 2000,
                      'Number of training steps to start training.')
 flags.DEFINE_integer('episode_length', 1000, 'Max episode length.')
 flags.DEFINE_integer('eval_episodes', 1,
                      'Number of episodes used for evaluation.')
 flags.DEFINE_integer('log_interval', 1000, 'Logging interval.')
-flags.DEFINE_integer('eval_interval', 1000, 'Eval interval.')
-flags.DEFINE_integer('train_interval', 400, 'Mini-batch size for SGD.')
-flags.DEFINE_integer('train_batch_size', 256, 'Mini-batch size for SGD.')
+flags.DEFINE_integer('eval_interval', 1080, 'Eval interval.')
+flags.DEFINE_integer('train_interval', 360, 'Mini-batch size for SGD.')
+flags.DEFINE_integer('train_batch_size', 512, 'Mini-batch size for SGD.')
 flags.DEFINE_boolean('save_video', True, 'Save videos during evaluation.')
+flags.DEFINE_string('gpu_id', '0', 'GPU ID.')
 config_flags.DEFINE_config_file(
     'config',
     'configs/sac_default.py',
@@ -37,8 +37,8 @@ config_flags.DEFINE_config_file(
 
 def main(_):
     config = dict(FLAGS.config)
-    create_env = NeutronSourceEnv
 
+    create_env = NeutronSourceEnv
     trainer = SACTrainer(config,
                          create_env,
                          num_samples=FLAGS.num_samples,

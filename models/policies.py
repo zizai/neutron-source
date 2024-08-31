@@ -81,12 +81,30 @@ class NormalTanhMixturePolicy(nn.Module):
         return distrax.Independent(dist, 1)
 
 
-@partial(jax.jit, static_argnums=1)
-def sample_actions(rng: PRNGKey,
+class BinomialPolicy(nn.Module):
+    hidden_dims: Sequence[int]
+    action_dim: int
+
+    @nn.compact
+    def __call__(self, obs):
+        outputs = MLP(self.hidden_dims, activate_final=True)(obs)
+
+        logits = nn.Dense(self.action_dim, kernel_init=default_init())(outputs)
+        dist = distrax.Bernoulli(logits=logits)
+        return distrax.Independent(dist)
+
+
+def sample_action(rng: PRNGKey,
                    actor_def: nn.Module,
                    actor_params: Params,
-                   observations: np.ndarray,
-                   temperature: float = 1.0) -> Tuple[PRNGKey, jnp.ndarray]:
-    dist = actor_def.apply({'params': actor_params}, observations, temperature)
+                   obs: np.ndarray) -> Tuple[PRNGKey, jnp.ndarray]:
+    dist = actor_def.apply({'params': actor_params}, obs)
     rng, key = jax.random.split(rng)
     return rng, dist.sample(seed=key)
+
+
+def take_action(actor_def: nn.Module,
+                actor_params: Params,
+                obs: np.ndarray) -> Tuple[PRNGKey, jnp.ndarray]:
+    dist = actor_def.apply({'params': actor_params}, obs)
+    return dist.distribution.probs > 0.5

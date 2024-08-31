@@ -1,7 +1,10 @@
+absl-py
 distrax
 flax
+matplotlib
 ml_collections
 optax
+ray[default]
 Rx
 tensorboardX
 tqdm

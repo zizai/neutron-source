@@ -1,7 +1,10 @@
-from multiprocessing import Pool
+import os
+from datetime import datetime
 from typing import Dict
 
+import jax
 import numpy as np
+import ray
 import rx
 from rx import operators
 from tqdm import tqdm
@@ -29,10 +32,48 @@ def evaluate(agent, env, num_episodes, **kwargs) -> Dict[str, float]:
     return stats
 
 
+@ray.remote
+class SACWorker(object):
+    def __init__(self, create_env, sac_config, seed):
+        # initialize environment
+        self.env = create_env()
+        self.obs = self.env.reset()
+
+        # initialize agent
+        self.agent = SACAgent(seed,
+                              self.env.observation_space.sample()[np.newaxis],
+                              self.env.action_space.sample()[np.newaxis],
+                              **sac_config)
+        self.worker_timesteps = 0
+
+    def ping(self):
+        # import os
+        # print("GPU IDs: {}".format(ray.get_runtime_context().get_accelerator_ids()["GPU"]))
+        # print(f"CUDA_VISIBLE_DEVICES: {os.environ['CUDA_VISIBLE_DEVICES']}")
+        return ray.get_runtime_context().get_accelerator_ids()["GPU"], self.worker_timesteps
+
+    def rollout_step(self):
+        action = self.agent.sample_action(self.obs)
+        next_obs, reward, done, info = self.env.step(action)
+        results = self.obs, action, next_obs, reward, done, info
+
+        if done:
+            self.obs = self.env.reset()
+        else:
+            self.obs = next_obs
+
+        self.worker_timesteps += 1
+        return results
+
+    def update(self, sac):
+        self.agent.sac = sac
+        return True
+
+
 class SACTrainer(Trainer):
 
     def __init__(self,
-                 config,
+                 sac_config,
                  create_env,
                  num_cpus: int = 4,
                  num_samples: int = int(1e7),
@@ -43,10 +84,10 @@ class SACTrainer(Trainer):
                  log_interval: int = int(1e3),
                  train_batch_size: int = 256,
                  train_interval: int = int(1e3),
-                 train_sgd_iters: int = 80,
+                 train_sgd_iters: int = 4,
                  save_video: bool = False,
                  seed: int = 42):
-        super(SACTrainer, self).__init__(seed, config, save_video=save_video)
+        super(SACTrainer, self).__init__(seed, sac_config, save_video=save_video)
 
         self.num_cpus = num_cpus
         self.num_samples = num_samples
@@ -63,67 +104,68 @@ class SACTrainer(Trainer):
         self.replay_buffer = ReplayBuffer(replay_buffer_size)
 
         # initialize environment
-        self.env = create_env()
-        self.eval_env = create_env()
-        self.obs = self.env.reset()
+        self.eval_env = create_env(work_dir='/root/flukawork/neutron_source_' + datetime.now().__format__('%Y-%m-%d_%H-%M-%S'))
+
+        # initialize workers
+        num_workers = 36
+        ray.init(num_cpus=num_workers, num_gpus=num_workers // 4)
+        self.workers = [SACWorker.options(num_cpus=1, num_gpus=0.25).remote(create_env, sac_config, seed * 2 + i) for i in range(num_workers)]
 
         # initialize agent
+        print(jax.devices())
         self.agent = SACAgent(seed,
-                              self.env.observation_space.sample().reshape(1, -1),
-                              self.env.action_space.sample()[np.newaxis], **config)
+                              self.eval_env.observation_space.sample()[np.newaxis],
+                              self.eval_env.action_space.sample()[np.newaxis],
+                              device=jax.devices()[-1],
+                              **sac_config)
 
-        self.rollout_timesteps = 0
         self.pbar = None
 
-    def rollout_step(self, i):
-        action = self.agent.take_action(self.obs)
-        next_obs, reward, done, info = self.env.step(action)
-        mask = 1.0
+    def rollout_step(self, t):
+        rollout_ids = [worker.rollout_step.remote() for worker in self.workers]
+        for _ in range(len(rollout_ids)):
+            [rollout_id], rollout_ids = ray.wait(rollout_ids)
+            obs, action, next_obs, reward, done, info = ray.get(rollout_id)
+            mask = 1. - done
+            self.replay_buffer.insert(obs, action, reward, mask, next_obs)
 
-        self.replay_buffer.insert(self.obs, action, reward, mask, next_obs)
+            t += 1
+            self.pbar.update(1)
+        return t
 
-        if done:
-            self.obs = self.env.reset()
-        else:
-            self.obs = next_obs
-
-        self.rollout_timesteps += 1
-        return i
-
-    def train_step(self, i):
-        if i >= self.start_training and i % self.train_interval == 0:
+    def train_step(self, t):
+        if t >= self.start_training and t % self.train_interval == 0:
             for j in range(self.train_sgd_iters):
                 batch = self.replay_buffer.sample(self.train_batch_size)
                 update_info = self.agent.learn_on_batch(batch)
 
-            for k, v in update_info.items():
-                self.summary_writer.add_scalar(f'training/{k}', v, self.rollout_timesteps)
-            self.summary_writer.flush()
-        return i
+            for worker in self.workers:
+                ray.get(worker.update.remote(self.agent.sac))
 
-    def eval_step(self, i):
-        if i >= self.start_training and i % self.eval_interval == 0:
-            eval_stats = evaluate(self.agent, self.eval_env, self.eval_episodes, temperature=0.0)
+            for k, v in update_info.items():
+                self.summary_writer.add_scalar(f'training/{k}', v, t)
+            self.summary_writer.flush()
+        return t
+
+    def eval_step(self, t):
+        if t >= self.start_training and t % self.eval_interval == 0:
+            eval_stats = evaluate(self.agent, self.eval_env, self.eval_episodes)
 
             for k, v in eval_stats.items():
-                self.summary_writer.add_scalar(f'evaluation/{k}', v, self.rollout_timesteps)
+                self.summary_writer.add_scalar(f'evaluation/{k}', v, t)
             self.summary_writer.flush()
-
-        self.pbar.update(1)
-        return i
+        return t
 
     def reset(self):
         self.stop()
-        self.obs = self.env.reset()
-        self.rollout_timesteps = 0
 
     def start(self):
         self.pbar = tqdm(total=self.num_samples)
-        rx.range(1, self.num_samples + 1).pipe(
-            operators.map(lambda i: self.rollout_step(i)),
-            operators.map(lambda i: self.train_step(i)),
-            operators.map(lambda i: self.eval_step(i))
-        ).subscribe()
+        t = 0
+        while t < self.num_samples:
+            t = self.rollout_step(t)
+            t = self.train_step(t)
+            t = self.eval_step(t)
 
     def stop(self):
         pass

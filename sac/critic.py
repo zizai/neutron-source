@@ -32,7 +32,8 @@ def update(sac: ActorCriticTemp, batch: Batch, discount: float,
 
     def critic_loss_fn(critic_params: Params) -> Tuple[jnp.ndarray, InfoDict]:
         q1, q2 = sac.critic.apply({'params': critic_params},
-                                  batch.observations, batch.actions)
+                                  batch.observations,
+                                  batch.actions)
         critic_loss = ((q1 - target_q)**2 + (q2 - target_q)**2).mean()
         return critic_loss, {
             'critic_loss': critic_loss,

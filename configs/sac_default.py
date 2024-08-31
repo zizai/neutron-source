@@ -11,7 +11,7 @@ def get_config():
     config.critic_lr = 3e-4
     config.temp_lr = 3e-4
 
-    config.hidden_dims = (400, 400, 400)
+    config.hidden_dims = (512, 512, 512)
 
     config.discount = 0.99
 

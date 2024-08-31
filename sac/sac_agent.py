@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from jaxlib.xla_extension import Device
 
 from trainer.dataset import Batch
 from models import policies, critic_net
@@ -13,18 +14,20 @@ from models.common import ActorCriticTemp, InfoDict, Model
 from sac import temperature, critic, actor
 
 
-@partial(jax.jit, static_argnums=(2, 3, 4, 5))
-def _update_jit(sac: ActorCriticTemp, batch: Batch, discount: float,
-                tau: float, target_entropy: float,
-                update_target: bool) -> Tuple[ActorCriticTemp, InfoDict]:
+def update_sac(sac: ActorCriticTemp,
+               batch: Batch,
+               discount: float,
+               tau: float,
+               target_entropy: float,
+               update_target: bool) -> Tuple[ActorCriticTemp, InfoDict]:
 
     sac, critic_info = critic.update(sac, batch, discount, soft_critic=True)
     if update_target:
         sac = critic.target_update(sac, tau)
 
     sac, actor_info = actor.update(sac, batch)
-    sac, alpha_info = temperature.update(sac, actor_info['entropy'],
-                                         target_entropy)
+    # sac, alpha_info = temperature.update(sac, actor_info['entropy'], target_entropy)
+    alpha_info = {}
 
     return sac, {**critic_info, **actor_info, **alpha_info}
 
@@ -42,7 +45,8 @@ class SACAgent(object):
                  tau: float = 0.005,
                  target_update_period: int = 1,
                  target_entropy: Optional[float] = None,
-                 init_temperature: float = 1.0):
+                 init_temperature: float = 1.0,
+                 device: Device = None):
 
         action_dim = actions.shape[-1]
 
@@ -54,11 +58,12 @@ class SACAgent(object):
         self.tau = tau
         self.target_update_period = target_update_period
         self.discount = discount
+        self.device = device
 
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, critic_key, temp_key = jax.random.split(rng, 4)
 
-        actor_def = policies.NormalTanhPolicy(hidden_dims, action_dim)
+        actor_def = policies.BinomialPolicy(hidden_dims, action_dim)
         actor = Model.create(actor_def,
                              inputs=[actor_key, observations],
                              tx=optax.adam(learning_rate=actor_lr))
@@ -67,8 +72,8 @@ class SACAgent(object):
         critic = Model.create(critic_def,
                               inputs=[critic_key, observations, actions],
                               tx=optax.adam(learning_rate=critic_lr))
-        target_critic = Model.create(
-            critic_def, inputs=[critic_key, observations, actions])
+        target_critic = Model.create(critic_def,
+                                     inputs=[critic_key, observations, actions])
 
         temp = Model.create(temperature.Temperature(init_temperature),
                             inputs=[temp_key],
@@ -81,21 +86,40 @@ class SACAgent(object):
                                    rng=rng)
         self.step = 1
 
-    def take_action(self,
-                    observations: np.ndarray,
-                    temperature: float = 1.0) -> jnp.ndarray:
-        rng, action = policies.sample_actions(self.sac.rng,
-                                               self.sac.actor.apply_fn,
-                                               self.sac.actor.params,
-                                               observations, temperature)
-        self.sac = self.sac.replace(rng=rng)
+    def sample_action(self, obs) -> jnp.ndarray:
+        if self.device is None:
+            _sample_action = jax.jit(policies.sample_action, static_argnums=(1,))
+        else:
+            _sample_action = jax.jit(policies.sample_action, static_argnums=(1,), device=self.device)
 
-        action = jnp.asarray(action).reshape(-1)
-        return action > 0
+        rng, action = _sample_action(self.sac.rng,
+                                     self.sac.actor.apply_fn,
+                                     self.sac.actor.params,
+                                     obs)
+        self.sac = self.sac.replace(rng=rng)
+        return action
+
+    def take_action(self, obs: np.ndarray) -> jnp.ndarray:
+        if self.device is None:
+            _take_action = jax.jit(policies.take_action, static_argnums=(0,))
+        else:
+            _take_action = jax.jit(policies.take_action, static_argnums=(0,), device=self.device)
+
+        action = _take_action(self.sac.actor.apply_fn, self.sac.actor.params, obs)
+        return action
 
     def learn_on_batch(self, batch: Batch) -> InfoDict:
+        if self.device is None:
+            _update_sac = jax.jit(update_sac, static_argnums=(2, 3, 4, 5))
+        else:
+            _update_sac = jax.jit(update_sac, static_argnums=(2, 3, 4, 5), device=self.device)
+
+        self.sac, info = _update_sac(self.sac,
+                                     batch,
+                                     self.discount,
+                                     self.tau,
+                                     self.target_entropy,
+                                     self.step % self.target_update_period == 0)
+
         self.step += 1
-        self.sac, info = _update_jit(
-            self.sac, batch, self.discount, self.tau, self.target_entropy,
-            self.step % self.target_update_period == 0)
         return info

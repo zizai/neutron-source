@@ -1,5 +1,7 @@
 import os
 import subprocess
+import uuid
+from datetime import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -49,7 +51,7 @@ START       100000.0
 STOP
 """
 
-WORK_DIR = '/root/flukawork'
+WORK_DIR = '/root/flukawork/'
 
 
 def create_fluka_inp(f_name, design_mask):
@@ -105,7 +107,7 @@ def create_fluka_inp(f_name, design_mask):
 
 
 class NeutronSourceEnv(object):
-    def __init__(self, action_dim=64, max_steps=64, rew_scale=1000.):
+    def __init__(self, action_dim=64, max_steps=64, rew_scale=1000., work_dir=None):
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.action_space = IntBox(0, 1, shape=(action_dim,))
@@ -114,16 +116,19 @@ class NeutronSourceEnv(object):
         self.geometry = np.ones((max_steps, action_dim))
         self.steps = 0
         self.rew_scale = rew_scale
+        self.work_dir = WORK_DIR + uuid.uuid4().__str__() if work_dir is None else work_dir
 
     def step(self, action):
         self.geometry[self.steps] = action
         self.steps += 1
 
-        rew = - np.sum(action) * 0.05
+        rew = - np.sum(1 - action) * 0.02
         if self.steps == self.max_steps:
             self.run_sim()
             data = self.read_data()
-            rew += np.sum(data[30:-30, 30:-30]) * self.rew_scale
+            in_count = np.sum(data[20:-20, 20:-20])
+            out_count = np.sum(data) - np.sum(data[20:-20, 20:-20])
+            rew += (in_count - out_count * 0.1) * self.rew_scale
 
         done = self.steps == self.max_steps
         obs = np.zeros(self.max_steps)
@@ -142,15 +147,18 @@ class NeutronSourceEnv(object):
         return obs
 
     def run_sim(self):
-        os.chdir(WORK_DIR)
+        if not os.path.exists(self.work_dir):
+            os.mkdir(self.work_dir)
 
-        f_name = WORK_DIR + '/neutron-source.inp'
+        os.chdir(self.work_dir)
+
+        f_name = self.work_dir + '/neutron-source.inp'
         create_fluka_inp(f_name, self.geometry)
 
         return subprocess.run(['/usr/local/fluka/bin/rfluka', '-M 1', f_name], capture_output=True)
 
     def read_data(self):
-        f_name = WORK_DIR + '/neutron-source001_fort.25'
+        f_name = self.work_dir + '/neutron-source001_fort.25'
         f = open(f_name, 'r')
 
         data = []
@@ -162,10 +170,10 @@ class NeutronSourceEnv(object):
         data = data.reshape(100, 100)
 
         plt.imshow(self.geometry)
-        plt.savefig(WORK_DIR + '/neutron-source.png')
+        plt.savefig(self.work_dir + '/neutron-source.png')
 
         plt.imshow(data)
-        plt.savefig(WORK_DIR + '/neutron-fluence.png')
+        plt.savefig(self.work_dir + '/neutron-fluence.png')
         return data
 
 
