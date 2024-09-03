@@ -107,16 +107,23 @@ def create_fluka_inp(f_name, design_mask):
 
 
 class NeutronSourceEnv(object):
-    def __init__(self, action_dim=64, max_steps=64, rew_scale=1000., work_dir=None):
+    def __init__(self, action_dim=64, max_steps=64, rew_scale=50., work_dir=None):
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.action_space = IntBox(0, 1, shape=(action_dim,))
-        self.observation_space = IntBox(0, 1, shape=(max_steps,))
-        # self.observation_space = IntBox(0, 1, shape=(max_steps + action_dim,))
+        # self.observation_space = IntBox(0, 1, shape=(max_steps,))
+        self.observation_space = FloatBox(-1, 1, shape=(action_dim + max_steps,))
         self.geometry = np.ones((max_steps, action_dim))
         self.steps = 0
         self.rew_scale = rew_scale
         self.work_dir = WORK_DIR + uuid.uuid4().__str__() if work_dir is None else work_dir
+
+    def get_obs(self, action):
+        d = self.max_steps // 2
+        k = np.arange(d)
+        k = 1 / 100 ** (2 * k / d)
+        t = self.steps
+        return np.concatenate([action, np.sin(k * t), np.cos(k * t)])
 
     def step(self, action):
         self.geometry[self.steps] = action
@@ -130,19 +137,14 @@ class NeutronSourceEnv(object):
             out_count = np.sum(data) - np.sum(data[20:-20, 20:-20])
             rew += (in_count - out_count * 0.1) * self.rew_scale
 
+        obs = self.get_obs(action)
         done = self.steps == self.max_steps
-        obs = np.zeros(self.max_steps)
-        if self.steps < self.max_steps:
-            obs[self.steps] = 1
-        # obs = np.concatenate([action, obs])
 
         return obs, rew, done, {}
 
     def reset(self):
-        obs = np.zeros(self.max_steps)
-        obs[0] = 1
-        # action = np.zeros(self.action_dim)
-        # obs = np.concatenate([action, obs])
+        action = np.zeros(self.action_dim)
+        obs = self.get_obs(action)
         self.steps = 0
         return obs
 

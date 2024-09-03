@@ -26,8 +26,8 @@ def update_sac(sac: ActorCriticTemp,
         sac = critic.target_update(sac, tau)
 
     sac, actor_info = actor.update(sac, batch)
-    # sac, alpha_info = temperature.update(sac, actor_info['entropy'], target_entropy)
-    alpha_info = {}
+    sac, alpha_info = temperature.update(sac, actor_info['entropy'], target_entropy)
+    # alpha_info = {}
 
     return sac, {**critic_info, **actor_info, **alpha_info}
 
