@@ -140,25 +140,27 @@ def create_fluka_inp(f_name, design_mask, plane='xy'):
 
 
 class NeutronSourceEnv(object):
-    def __init__(self, action_dim=64, max_steps=64, rew_scale=50., work_dir=None):
+    def __init__(self, action_dim=1, max_steps=64, rew_scale=50., work_dir=None):
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.action_space = IntBox(0, 1, shape=(action_dim,))
         # self.observation_space = IntBox(0, 1, shape=(max_steps,))
-        self.observation_space = FloatBox(-1, 1, shape=(action_dim + max_steps * 2,))
-        self.geometry = np.ones((max_steps, action_dim))
+        self.observation_space = FloatBox(-1, 1, shape=(max_steps * 5,))
+        self.geometry = np.ones((max_steps, max_steps))
         self.steps = 0
         self.rew_scale = rew_scale
         self.work_dir = WORK_DIR + uuid.uuid4().__str__() if work_dir is None else work_dir
 
     def get_obs(self, action):
-        d = self.max_steps
-        k = np.pi * np.random.normal(0, 1, (d,))
-        t = self.steps
-        return np.concatenate([action, np.sin(k * t), np.cos(k * t)])
+        d = self.max_steps * 2
+        k = 2 * np.pi * np.random.normal(0, 1, (2, d))
+        pos = np.stack(np.meshgrid(np.linspace(0, 1, num=self.max_steps, endpoint=False), np.linspace(0, 1, num=self.max_steps + 1, endpoint=True)), -1)
+        pos = pos[self.steps]
+        action = np.tile(action.T, (self.max_steps, 1))
+        return np.concatenate([action, np.sin(pos @ k), np.cos(pos @ k)], -1)
 
     def step(self, action):
-        self.geometry[self.steps] = action
+        self.geometry[self.steps] = np.squeeze(action, -1)
         self.steps += 1
 
         rew = - np.sum(1 - action) * 0.02
@@ -175,9 +177,9 @@ class NeutronSourceEnv(object):
         return obs, rew, done, {}
 
     def reset(self):
-        action = np.zeros(self.action_dim)
-        obs = self.get_obs(action)
+        action = np.zeros((self.max_steps, 1))
         self.steps = 0
+        obs = self.get_obs(action)
         return obs
 
     def run_sim(self):
@@ -212,13 +214,12 @@ class NeutronSourceEnv(object):
 
 
 if __name__ == '__main__':
-    action_dim = 64
-    env = NeutronSourceEnv(action_dim=action_dim)
+    env = NeutronSourceEnv()
     np.random.seed(47)
 
     done = False
     while not done:
-        action = np.random.uniform(size=action_dim) > 0.5
+        action = np.random.uniform(size=(64, 1)) > 0.5
         obs, rew, done, _ = env.step(action)
 
     print(obs)
