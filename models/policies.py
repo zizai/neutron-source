@@ -91,7 +91,7 @@ class BinomialPolicy(nn.Module):
 
         logits = nn.Dense(self.action_dim, kernel_init=default_init())(outputs)
         dist = distrax.Bernoulli(logits=logits)
-        return distrax.Independent(dist)
+        return distrax.Independent(dist, None)
 
 
 def sample_action(rng: PRNGKey,

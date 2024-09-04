@@ -17,7 +17,7 @@ flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_string('task', 'run', 'Training task name.')
 flags.DEFINE_integer('num_samples', int(1e6), 'Number of sampling steps.')
 flags.DEFINE_integer('replay_buffer_size', int(1e5), 'Replay buffer capacity.')
-flags.DEFINE_integer('start_training', 2000,
+flags.DEFINE_integer('start_training', 10000,
                      'Number of training steps to start training.')
 flags.DEFINE_integer('episode_length', 1000, 'Max episode length.')
 flags.DEFINE_integer('eval_episodes', 1,

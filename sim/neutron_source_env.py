@@ -163,7 +163,7 @@ class NeutronSourceEnv(object):
         self.geometry[self.steps] = np.squeeze(action, -1)
         self.steps += 1
 
-        rew = - np.sum(1 - action) * 0.02
+        rew = - np.sum(1 - action) * 0.01
         if self.steps == self.max_steps:
             self.run_sim()
             data = self.read_data()
