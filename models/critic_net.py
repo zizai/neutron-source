@@ -16,7 +16,7 @@ class Critic(nn.Module):
                  actions: jnp.ndarray) -> jnp.ndarray:
         inputs = jnp.concatenate([observations, actions], -1)
         critic = MLP((*self.hidden_dims, 1))(inputs)
-        return jnp.squeeze(critic, -1)
+        return jnp.sum(jnp.squeeze(critic, -1), -1)
 
 
 class DoubleCritic(nn.Module):
