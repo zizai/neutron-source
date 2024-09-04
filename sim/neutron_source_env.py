@@ -54,42 +54,75 @@ STOP
 WORK_DIR = '/root/flukawork/'
 
 
-def create_fluka_inp(f_name, design_mask):
+def create_fluka_inp(f_name, design_mask, plane='xy'):
     beam_str = BEAM_PART
     material_str = MATERIAL_PART
     detector_str = DETECTOR_PART
 
-    y_range = (-10, 10)
-    z_range = (0, 20)
-    y_dim = design_mask.shape[0]
-    z_dim = design_mask.shape[1]
-    delta_y = (y_range[1] - y_range[0]) / y_dim
-    delta_z = (z_range[1] - z_range[0]) / z_dim
-    yy = np.linspace(y_range[0], y_range[1] - delta_y, y_dim)
-    zz = np.linspace(z_range[0], z_range[1] - delta_z, z_dim)
-    yy, zz = np.meshgrid(yy, zz)
+    if plane == 'xy':
+        x_range = (-10, 10)
+        y_range = (-10, 10)
+        x_dim = design_mask.shape[0]
+        y_dim = design_mask.shape[1]
+        delta_x = (x_range[1] - x_range[0]) / x_dim
+        delta_y = (y_range[1] - y_range[0]) / y_dim
+        xx = np.linspace(x_range[0], x_range[1] - delta_x, x_dim)
+        yy = np.linspace(y_range[0], y_range[1] - delta_y, y_dim)
+        xx, yy = np.meshgrid(xx, yy)
 
-    delta_y = (y_range[1] - y_range[0]) / y_dim
-    delta_z = (z_range[1] - z_range[0]) / z_dim
+        delta_x = (x_range[1] - x_range[0]) / x_dim
+        delta_y = (y_range[1] - y_range[0]) / y_dim
 
-    yy = yy.reshape(-1)
-    zz = zz.reshape(-1)
-    design_mask = design_mask.reshape(-1)
+        xx = xx.reshape(-1)
+        yy = yy.reshape(-1)
+        design_mask = design_mask.reshape(-1)
 
-    body_str = ""
+        body_str = ""
 
-    region_str = "reg1  5  +body1  -body2\n" + \
-                 "reg2  5  +body2  -body3\n" + \
-                 "det1  5  +body4  +body5\n" + \
-                 "det2  5  +body4  -body5\n"
-    for i in range(len(design_mask)):
-        body_str += f"RPP  b{i+1}  -10.0  +10.0  {yy[i]}  {yy[i] + delta_y}  {zz[i]}  {zz[i] + delta_z}\n"
-        region_str += f"vr{i+1}  5  +body3  +b{i+1}\n"
+        region_str = "reg1  5  +body1  -body2\n" + \
+                     "reg2  5  +body2  -body3\n" + \
+                     "det1  5  +body4  +body5\n" + \
+                     "det2  5  +body4  -body5\n"
+        for i in range(len(design_mask)):
+            body_str += f"RPP  b{i+1}  {xx[i]}  {xx[i] + delta_x}  {yy[i]}  {yy[i] + delta_y}  0.0  20.0\n"
+            region_str += f"vr{i+1}  5  +body3  +b{i+1}\n"
+            if design_mask[i] == True:
+                material_str += f"ASSIGNMAT  BERYLLIU  vr{i+1}\n"
+            else:
+                material_str += f"ASSIGNMAT  VACUUM    vr{i+1}\n"
+    elif plane == 'yz':
+        y_range = (-10, 10)
+        z_range = (0, 20)
+        y_dim = design_mask.shape[0]
+        z_dim = design_mask.shape[1]
+        delta_y = (y_range[1] - y_range[0]) / y_dim
+        delta_z = (z_range[1] - z_range[0]) / z_dim
+        yy = np.linspace(y_range[0], y_range[1] - delta_y, y_dim)
+        zz = np.linspace(z_range[0], z_range[1] - delta_z, z_dim)
+        yy, zz = np.meshgrid(yy, zz)
 
-        if design_mask[i] == True:
-            material_str += f"ASSIGNMAT  BERYLLIU  vr{i+1}\n"
-        else:
-            material_str += f"ASSIGNMAT  VACUUM    vr{i+1}\n"
+        delta_y = (y_range[1] - y_range[0]) / y_dim
+        delta_z = (z_range[1] - z_range[0]) / z_dim
+
+        yy = yy.reshape(-1)
+        zz = zz.reshape(-1)
+        design_mask = design_mask.reshape(-1)
+
+        body_str = ""
+
+        region_str = "reg1  5  +body1  -body2\n" + \
+                     "reg2  5  +body2  -body3\n" + \
+                     "det1  5  +body4  +body5\n" + \
+                     "det2  5  +body4  -body5\n"
+        for i in range(len(design_mask)):
+            body_str += f"RPP  b{i + 1}  -10.0  +10.0  {yy[i]}  {yy[i] + delta_y}  {zz[i]}  {zz[i] + delta_z}\n"
+            region_str += f"vr{i + 1}  5  +body3  +b{i + 1}\n"
+            if design_mask[i] == True:
+                material_str += f"ASSIGNMAT  BERYLLIU  vr{i+1}\n"
+            else:
+                material_str += f"ASSIGNMAT  VACUUM    vr{i+1}\n"
+    else:
+        raise NotImplementedError
 
     body_str += "END\n"
     region_str += "END\n"
@@ -112,16 +145,15 @@ class NeutronSourceEnv(object):
         self.max_steps = max_steps
         self.action_space = IntBox(0, 1, shape=(action_dim,))
         # self.observation_space = IntBox(0, 1, shape=(max_steps,))
-        self.observation_space = FloatBox(-1, 1, shape=(action_dim + max_steps,))
+        self.observation_space = FloatBox(-1, 1, shape=(action_dim + max_steps * 2,))
         self.geometry = np.ones((max_steps, action_dim))
         self.steps = 0
         self.rew_scale = rew_scale
         self.work_dir = WORK_DIR + uuid.uuid4().__str__() if work_dir is None else work_dir
 
     def get_obs(self, action):
-        d = self.max_steps // 2
-        k = np.arange(d)
-        k = 1 / 100 ** (2 * k / d)
+        d = self.max_steps
+        k = np.pi * np.random.normal(0, 1, (d,))
         t = self.steps
         return np.concatenate([action, np.sin(k * t), np.cos(k * t)])
 
