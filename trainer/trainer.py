@@ -12,7 +12,8 @@ from utils.logger import setup_logger
 class Trainer(object):
     def __init__(self,
                  seed: int,
-                 config: Dict,
+                 agent_name: str = None,
+                 log_dir: str = '/tf_logs',
                  save_video: bool = False,
                  gpu_mem_fraction: Optional[float] = None):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -20,8 +21,7 @@ class Trainer(object):
             assert 0 < gpu_mem_fraction < 1
             os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(gpu_mem_fraction)
 
-        self.agent_name = config.pop('agent_name')
-        log_dir = config.pop('log_dir') or os.path.expanduser('~/nb_results')
+        self.agent_name = agent_name
         self.save_dir = os.path.join(log_dir,
                                      '{}_{}'.format(self.agent_name, datetime.now().__format__('%Y-%m-%d_%H-%M-%S')))
 

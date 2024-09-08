@@ -140,96 +140,66 @@ def create_fluka_inp(f_name, design_mask, plane='xy'):
     f.close()
 
 
-class NeutronSourceEnv(object):
-    def __init__(self, action_dim=1, max_steps=64, rew_scale=50., work_dir=None, scan='cell'):
-        self.action_dim = action_dim
-        self.max_steps = max_steps
-        self.action_space = IntBox(0, 1, shape=(max_steps, action_dim))
-        # self.observation_space = IntBox(0, 1, shape=(max_steps,))
-        self.observation_space = FloatBox(-1, 1, shape=(max_steps, max_steps * 4))
-        self.rew_scale = rew_scale
+class NeutronSourceOneShot(object):
+    def __init__(self, shape=(64, 64), work_dir=None):
+        self.action_dim = 1
+        self.geometry = np.ones(shape)
+        self.action_space = IntBox(0, 1, shape=(int(np.prod(shape)), 1))
+        self.observation_space = FloatBox(-1, 1, shape=(int(np.prod(shape)), 2))
         self.work_dir = WORK_DIR + uuid.uuid4().__str__() if work_dir is None else work_dir
-        self.scan = scan
 
-        self.geometry = np.ones((max_steps, max_steps))
         self.steps = 0
 
-    def get_obs(self, action):
-        l = self.max_steps
-        t = self.steps % l
-        d = l * 2
-        k = 2 * np.pi * np.random.normal(0, 1, (2, d))
-        pos = np.stack(np.meshgrid(np.linspace(0, 1, num=l, endpoint=False), np.linspace(0, 1, num=l, endpoint=False)), -1)
-        sqrt_l = int(np.sqrt(l))
-        xi = t // sqrt_l
-        yi = t % sqrt_l
-        if self.scan == 'cell':
-            pos = pos.reshape(sqrt_l, sqrt_l, sqrt_l, sqrt_l, 2)[xi, :, yi, :, :].reshape(l, 2)
-        elif self.scan == 'grid':
-            pos = pos.reshape(sqrt_l, sqrt_l, sqrt_l, sqrt_l, 2)[:, xi, :, yi, :].reshape(l, 2)
-        elif self.scan == 'line':
-            pos = pos[t]
-        else:
-            raise NotImplementedError
-        return np.concatenate([np.sin(pos @ k), np.cos(pos @ k)], -1)
+    def get_obs(self):
+        nx, ny = self.geometry.shape
+        pos = np.meshgrid(np.linspace(0, 1, num=nx, endpoint=False), np.linspace(0, 1, num=ny, endpoint=False))
+        pos = np.reshape(np.stack(pos, -1), (-1, 2))
+        return pos
 
     def step(self, action):
-        l = self.max_steps
-        sqrt_l = int(np.sqrt(l))
-        t = self.steps % self.max_steps
-        geom = self.geometry
-        xi = t // sqrt_l
-        yi = t % sqrt_l
-        if self.scan == 'cell':
-            geom = geom.reshape(sqrt_l, sqrt_l, sqrt_l, sqrt_l)
-            geom[xi, :, yi, :] = action.reshape(sqrt_l, sqrt_l)
-            self.geometry = geom.reshape(l, l)
-        elif self.scan == 'grid':
-            geom = geom.reshape(sqrt_l, sqrt_l, sqrt_l, sqrt_l)
-            geom[:, xi, :, yi] = action.reshape(sqrt_l, sqrt_l)
-            self.geometry = geom.reshape(l, l)
-        elif self.scan == 'line':
-            self.geometry[t] = action[:, 0]
-        else:
-            raise NotImplementedError
-
+        self.geometry = action.reshape(self.geometry.shape)
         self.steps += 1
 
         # rew = - np.sum(1 - action) * 0.001
         rew = 0.0
         info = {}
-        if self.steps == self.max_steps:
-            self.run_sim()
-            data, img_info = self.read_data()
-            fluence = np.sum(data)
-            in_count = np.sum(data[20:-20, 20:-20])
-            out_count = fluence - np.sum(data[20:-20, 20:-20])
-            # in_count = np.sum(data[20:80, 20:80]) * 2
-            # mask = np.ones_like(data)
-            # mask[20:80, 20:80] = 0
-            # mask[:10, :] = 2
-            # mask[90:, :] = 2
-            # mask[:, :10] = 2
-            # mask[:, 90:] = 2
-            # out_count = np.sum(data * mask)
-            # rew += (in_count - out_count * 0.1) * self.rew_scale
-            ratio = 2 * in_count / (fluence + 1e-6) - out_count / (fluence + 1e-6)
-            # print('fluence: ' + str(fluence))
-            # print('ratio: ' + str(in_count / (fluence + 1e-6)))
-            # print('diff: ' + str(in_count - out_count))
-            rew += (np.exp(ratio) - 1) * 10 + np.where(fluence > 0.1, 0, fluence - 0.1) * 100
-            info.update(img_info)
 
-        obs = self.get_obs(action)
-        done = self.steps == self.max_steps
+        self.run_sim()
+        data, img_info = self.read_data()
+        fluence = np.sum(data)
+        in_count = np.sum(data[20:-20, 20:-20])
+        in_ratio = in_count / (fluence + 1e-6)
+        out_count = fluence - np.sum(data[20:-20, 20:-20])
+        # in_count = np.sum(data[20:80, 20:80]) * 2
+        # mask = np.ones_like(data)
+        # mask[20:80, 20:80] = 0
+        # mask[:10, :] = 2
+        # mask[90:, :] = 2
+        # mask[:, :10] = 2
+        # mask[:, 90:] = 2
+        # out_count = np.sum(data * mask)
+        # rew += (in_count - out_count * 0.1) * self.rew_scale
+        # ratio = 2 * in_count / (fluence + 1e-6) - out_count / (fluence + 1e-6)
+        # print('fluence: ' + str(fluence))
+        # print('ratio: ' + str(in_count / (fluence + 1e-6)))
+        # print('diff: ' + str(in_count - out_count))
+        # rew += (np.exp(in_count / (fluence + 1e-6)) - 1) * 10 + np.where(fluence > 0.1, 0, fluence - 0.1) * 100
+        # rew = (np.exp(fluence) - 1) * (np.exp(2 * in_count / (fluence + 1e-6)) - 1) * 10 + np.where(fluence > 0.1, 0, fluence - 0.1) * 100
+        rew = np.where(fluence > 0.1, (in_ratio - 0.4) * 50, (fluence - 0.1) * 100)
+
+        info['fluence'] = float(fluence)
+        info['in_ratio'] = float(in_ratio)
+        info.update(img_info)
+
+        obs = self.get_obs()
+        done = self.steps >= 1
 
         return obs, rew, done, info
 
     def reset(self):
         self.steps = 0
-        self.geometry = np.ones((self.max_steps, self.max_steps))
-        action = np.zeros((self.max_steps, 1))
-        obs = self.get_obs(action)
+        self.geometry = np.ones_like(self.geometry)
+        obs = self.get_obs()
         return obs
 
     def run_sim(self):
@@ -266,13 +236,13 @@ class NeutronSourceEnv(object):
 
 
 if __name__ == '__main__':
-    env = NeutronSourceEnv(scan='grid')
+    env = NeutronSourceOneShot()
     np.random.seed(47)
 
     done = False
     total_rew = 0.0
     while not done:
-        action = np.ones((64, 1))
+        action = np.ones((64 * 64))
         obs, rew, done, info = env.step(action)
         total_rew += rew
 
@@ -282,7 +252,7 @@ if __name__ == '__main__':
     total_rew = 0.0
     env.reset()
     while not done:
-        action = np.random.uniform(size=(64, 1)) > 0.5
+        action = np.random.uniform(size=(64 * 64)) > 0.5
         obs, rew, done, info = env.step(action)
         total_rew += rew
 
@@ -292,7 +262,7 @@ if __name__ == '__main__':
     total_rew = 0.0
     env.reset()
     while not done:
-        action = np.zeros((64, 1))
+        action = np.zeros((64 * 64))
         obs, rew, done, info = env.step(action)
         total_rew += rew
 
@@ -305,7 +275,7 @@ if __name__ == '__main__':
     env.reset()
     step = 0
     while not done:
-        action = geom[:, step:step+1]
+        action = geom.reshape(-1)
         obs, rew, done, info = env.step(action)
         total_rew += rew
         step += 1

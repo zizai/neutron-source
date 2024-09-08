@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from models.common import MLP, Params, PRNGKey, default_init
+from models.common import MLP, Params, PRNGKey
 
 LOG_STD_MIN = -10.0
 LOG_STD_MAX = 2.0
@@ -20,15 +20,20 @@ class NormalTanhPolicy(nn.Module):
 
     @nn.compact
     def __call__(self,
-                 observations: jnp.ndarray,
+                 obs: jnp.ndarray,
                  temperature: float = 1.0) -> distrax.Distribution:
-        outputs = MLP(self.hidden_dims, activate_final=True)(observations)
+        assert obs.shape[-1] == 2
+        k = self.param('k', jax.nn.initializers.normal(1.),(2, 128))
+        k = jax.lax.stop_gradient(k)
+        k = 2 * jnp.pi * k
+        x = jnp.concatenate([jnp.sin(obs @ k), jnp.cos(obs @ k)], -1)
 
-        means = nn.Dense(self.action_dim, kernel_init=default_init())(outputs)
+        outputs = MLP(self.hidden_dims, activate_final=True)(x)
+
+        means = nn.Dense(self.action_dim)(outputs)
 
         if self.state_dependent_std:
-            log_stds = nn.Dense(self.action_dim,
-                                kernel_init=default_init())(outputs)
+            log_stds = nn.Dense(self.action_dim)(outputs)
         else:
             log_stds = self.param('log_stds', nn.initializers.zeros,
                                   (self.action_dim, ))
@@ -44,7 +49,7 @@ class NormalTanhPolicy(nn.Module):
 class NormalTanhMixturePolicy(nn.Module):
     hidden_dims: Sequence[int]
     action_dim: int
-    num_components: int = 5
+    num_components: int = 4
 
     @nn.compact
     def __call__(self,
@@ -52,13 +57,10 @@ class NormalTanhMixturePolicy(nn.Module):
                  temperature: float = 1.0) -> distrax.Distribution:
         outputs = MLP(self.hidden_dims, activate_final=True)(observations)
 
-        logits = nn.Dense(self.action_dim * self.num_components,
-                          kernel_init=default_init())(outputs)
+        logits = nn.Dense(self.action_dim * self.num_components)(outputs)
         means = nn.Dense(self.action_dim * self.num_components,
-                         kernel_init=default_init(),
                          bias_init=nn.initializers.normal(stddev=1.0))(outputs)
-        log_stds = nn.Dense(self.action_dim * self.num_components,
-                            kernel_init=default_init())(outputs)
+        log_stds = nn.Dense(self.action_dim * self.num_components)(outputs)
 
         shape = list(observations.shape[:-1]) + [-1, self.num_components]
         logits = jnp.reshape(logits, shape)
@@ -86,25 +88,33 @@ class BinomialPolicy(nn.Module):
     action_dim: int
 
     @nn.compact
-    def __call__(self, obs):
+    def __call__(self, obs, temp=1.0):
         outputs = MLP(self.hidden_dims, activate_final=True)(obs)
 
-        logits = nn.Dense(self.action_dim, kernel_init=default_init())(outputs)
+        logits = nn.Dense(self.action_dim)(outputs)
         dist = distrax.Bernoulli(logits=logits)
-        return distrax.Independent(dist, None)
+        return distrax.Independent(dist, 1)
 
 
 def sample_action(rng: PRNGKey,
-                   actor_def: nn.Module,
-                   actor_params: Params,
-                   obs: np.ndarray) -> Tuple[PRNGKey, jnp.ndarray]:
-    dist = actor_def.apply({'params': actor_params}, obs)
+                  actor_def: nn.Module,
+                  actor_params: Params,
+                  obs: np.ndarray,
+                  temp: float) -> Tuple[PRNGKey, jnp.ndarray]:
+    dist = actor_def.apply({'params': actor_params}, obs, temp)
     rng, key = jax.random.split(rng)
-    return rng, dist.sample(seed=key)
+    if isinstance(actor_def, BinomialPolicy):
+        return rng, dist.sample(seed=key)
+    else:
+        return rng, dist.sample(seed=key) > 0
 
 
 def take_action(actor_def: nn.Module,
                 actor_params: Params,
-                obs: np.ndarray) -> Tuple[PRNGKey, jnp.ndarray]:
-    dist = actor_def.apply({'params': actor_params}, obs)
-    return dist.distribution.probs > 0.5
+                obs: np.ndarray,
+                temp: float) -> Tuple[PRNGKey, jnp.ndarray]:
+    dist = actor_def.apply({'params': actor_params}, obs, temp)
+    if isinstance(actor_def, BinomialPolicy):
+        return dist.distribution.mean() > 0.5
+    else:
+        return dist.distribution.mean() > 0

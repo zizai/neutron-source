@@ -28,6 +28,7 @@ def update(sac: ActorCriticTemp, batch: Batch, discount: float,
     target_q = batch.rewards + discount * batch.masks * next_q
 
     if soft_critic:
+        next_log_probs = jnp.mean(next_log_probs, -1)
         target_q -= discount * batch.masks * sac.temp() * next_log_probs
 
     def critic_loss_fn(critic_params: Params) -> Tuple[jnp.ndarray, InfoDict]:

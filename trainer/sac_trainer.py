@@ -14,20 +14,17 @@ from trainer.replay_buffer import ReplayBuffer
 from trainer.trainer import Trainer
 
 
-def evaluate(agent, env, num_episodes, **kwargs) -> Dict[str, float]:
-    stats = {'total_reward': []}
-    for _ in range(num_episodes):
-        obs, done = env.reset(), False
-        rew = 0
-        while not done:
-            action = agent.take_action(obs, **kwargs)
-            obs, rew, done, info = env.step(action)
-            rew += rew
+def evaluate(agent, env, **kwargs) -> Dict[str, float]:
+    obs, done = env.reset(), False
+    total_rew = 0
+    info = {}
+    while not done:
+        action = agent.take_action(obs, **kwargs)
+        obs, rew, done, info = env.step(action)
+        total_rew += rew
 
-        stats['total_reward'].append(rew)
-
-    for k, v in stats.items():
-        stats[k] = np.mean(v)
+    stats = dict(total_reward=float(total_rew))
+    stats.update(info)
 
     return stats
 
@@ -84,16 +81,14 @@ class SACTrainer(Trainer):
                  log_interval: int = int(1e3),
                  train_batch_size: int = 256,
                  train_interval: int = int(1e3),
-                 train_sgd_iters: int = 4,
-                 save_video: bool = False,
+                 train_sgd_iters: int = 8,
                  seed: int = 42):
-        super(SACTrainer, self).__init__(seed, sac_config, save_video=save_video)
+        super(SACTrainer, self).__init__(seed, agent_name='SAC')
 
         self.num_cpus = num_cpus
         self.num_samples = num_samples
         self.start_training = start_training
         self.episode_length = episode_length
-        self.eval_episodes = 1
         self.eval_interval = eval_interval
         self.log_interval = log_interval
         self.train_batch_size = train_batch_size
@@ -149,11 +144,19 @@ class SACTrainer(Trainer):
 
     def eval_step(self, t):
         if t >= self.start_training and t % self.eval_interval == 0:
-            eval_stats = evaluate(self.agent, self.eval_env, self.eval_episodes)
+            eval_stats = evaluate(self.agent, self.eval_env)
 
             for k, v in eval_stats.items():
-                self.summary_writer.add_scalar(f'evaluation/{k}', v, t)
+                if isinstance(v, float):
+                    self.summary_writer.add_scalar(f'evaluation/{k}', v, t)
+                if k == 'img':
+                    for kk, vv in v.items():
+                        if t % (self.eval_interval * 10) == 0 or t == self.num_samples:
+                            self.summary_writer.add_image(f'evaluation/{kk}', vv, t, dataformats='HWC')
+
             self.summary_writer.flush()
+            self.agent.save(self.save_dir)
+
         return t
 
     def reset(self):

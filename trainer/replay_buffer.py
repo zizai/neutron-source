@@ -105,10 +105,10 @@ class ReplayBuffer(object):
 
         o, next_o = np.asarray(o), np.asarray(next_o)
 
-        return Batch(observations=o,
-                     actions=np.asarray(a),
-                     rewards=np.asarray(r),
-                     masks=np.asarray(masks),
-                     next_observations=next_o,
-                     beliefs=np.asarray(h) if h else None,
-                     states=np.asarray(s) if s else None)
+        return Batch(observations=np.asarray(o, np.float32),
+                     actions=np.asarray(a, np.float32),
+                     rewards=np.asarray(r, np.float32),
+                     masks=np.asarray(masks, np.float32),
+                     next_observations=np.asarray(next_o, np.float32),
+                     beliefs=np.asarray(h, np.float32) if h else None,
+                     states=np.asarray(s, np.float32) if s else None)

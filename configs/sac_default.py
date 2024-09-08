@@ -4,14 +4,11 @@ import ml_collections
 def get_config():
     config = ml_collections.ConfigDict()
 
-    config.agent_name = 'sac'
-    config.log_dir = '/tf_logs'
-
     config.actor_lr = 3e-4
     config.critic_lr = 3e-4
     config.temp_lr = 3e-4
 
-    config.hidden_dims = (512, 512, 512)
+    config.hidden_dims = (512, 512, 512, 512, 512)
 
     config.discount = 0.99
 

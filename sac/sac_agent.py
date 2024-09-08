@@ -8,6 +8,7 @@ import numpy as np
 import optax
 from jaxlib.xla_extension import Device
 
+from models.policies import BinomialPolicy
 from trainer.dataset import Batch
 from models import policies, critic_net
 from models.common import ActorCriticTemp, InfoDict, Model
@@ -26,8 +27,10 @@ def update_sac(sac: ActorCriticTemp,
         sac = critic.target_update(sac, tau)
 
     sac, actor_info = actor.update(sac, batch)
-    # sac, alpha_info = temperature.update(sac, actor_info['entropy'], target_entropy)
-    alpha_info = {}
+    if isinstance(sac.actor.apply_fn, BinomialPolicy):
+        alpha_info = {}
+    else:
+        sac, alpha_info = temperature.update(sac, actor_info['entropy'], target_entropy)
 
     return sac, {**critic_info, **actor_info, **alpha_info}
 
@@ -63,7 +66,7 @@ class SACAgent(object):
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, critic_key, temp_key = jax.random.split(rng, 4)
 
-        actor_def = policies.BinomialPolicy(hidden_dims, action_dim)
+        actor_def = policies.NormalTanhPolicy(hidden_dims, action_dim)
         actor = Model.create(actor_def,
                              inputs=[actor_key, observations],
                              tx=optax.adam(learning_rate=actor_lr))
@@ -95,7 +98,8 @@ class SACAgent(object):
         rng, action = _sample_action(self.sac.rng,
                                      self.sac.actor.apply_fn,
                                      self.sac.actor.params,
-                                     obs)
+                                     obs,
+                                     self.sac.temp())
         self.sac = self.sac.replace(rng=rng)
         return action
 
@@ -105,7 +109,7 @@ class SACAgent(object):
         else:
             _take_action = jax.jit(policies.take_action, static_argnums=(0,), device=self.device)
 
-        action = _take_action(self.sac.actor.apply_fn, self.sac.actor.params, obs)
+        action = _take_action(self.sac.actor.apply_fn, self.sac.actor.params, obs, 0)
         return action
 
     def learn_on_batch(self, batch: Batch) -> InfoDict:
@@ -123,3 +127,15 @@ class SACAgent(object):
 
         self.step += 1
         return info
+
+    def save(self, save_dir):
+        self.sac.actor.save(save_dir + '/actor')
+        self.sac.critic.save(save_dir + '/critic')
+        self.sac.target_critic.save(save_dir + '/target_critic')
+        self.sac.temp.save(save_dir + '/temp')
+
+    def load(self, save_dir):
+        self.sac = self.sac.replace(actor=self.sac.actor.load(save_dir + '/actor'),
+                                    critic=self.sac.critic.load(save_dir + '/critic'),
+                                    target_critic=self.sac.target_critic.load(save_dir + '/target_critic'),
+                                    temp=self.sac.temp.load(save_dir + '/temp'))
